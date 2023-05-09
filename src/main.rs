@@ -1,3 +1,4 @@
+use inquire::{Confirm, Select};
 use std::fmt::Display;
 use std::fs;
 use std::io;
@@ -5,10 +6,21 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 struct Agent {
     pub pid: String,
     pub socket_path: PathBuf,
+}
+
+impl Display for Agent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PID {}: {}",
+            &self.pid,
+            self.check_agent_identities().unwrap()
+        )
+    }
 }
 
 impl Agent {
@@ -17,17 +29,37 @@ impl Agent {
         println!("export SSH_AGENT_PID={}", self.pid);
     }
 
-    fn check_agent_identities(
-        agent: &Self,
-    ) -> Result<AgentIdentityStatus, Box<dyn std::error::Error>> {
+    fn kill_agent(&self) {
+        match Command::new("ssh-agent")
+            .arg("-k")
+            .env(
+                "SSH_AUTH_SOCK",
+                self.socket_path.to_str().unwrap_or_default(),
+            )
+            .env("SSH_AGENT_PID", &self.pid)
+            .stdout(Stdio::null())
+            .status()
+        {
+            Ok(status) => {
+                if status.success() {
+                    println!("Agent pid {} killed", self.pid);
+                } else {
+                    eprintln!("Failed to kill agent pid {}", self.pid);
+                }
+            }
+            Err(_) => eprintln!("Failed to kill agent pid {}", self.pid),
+        }
+    }
+
+    fn check_agent_identities(&self) -> Result<AgentIdentityStatus, Box<dyn std::error::Error>> {
         match Command::new("ssh-add")
             .arg("-l")
             .env(
                 "SSH_AUTH_SOCK",
-                agent.socket_path.to_str().unwrap_or_default(),
+                self.socket_path.to_str().unwrap_or_default(),
             )
             // the PID may not be required, funnily enough
-            .env("SSH_AGENT_PID", &agent.pid)
+            .env("SSH_AGENT_PID", &self.pid)
             .output()
         {
             Ok(o) => {
@@ -40,7 +72,7 @@ impl Agent {
                 }
             }
             Err(e) => {
-                println!("Error checking agent {}: {:?}", &agent.pid, e);
+                println!("Error checking agent {}: {:?}", &self.pid, e);
                 Err(Box::new(e))
             }
         }
@@ -86,14 +118,49 @@ fn main() -> io::Result<()> {
         Agent::check_agent_identities(a);
     });
     let agents = resolve_agent_pids(agents);
-    match check_agents(agents) {
+    let agents = {
+        if agents.len() > 1 {
+            let message =
+            "Found multiple running agents, would you like to terminate all but 1 without identities?";
+            let response = Confirm::new(message)
+                .with_default(true)
+                .with_help_message("Terminates all but 1 empty agents by default")
+                .prompt();
+
+            match response {
+                Ok(true) => purge_empty_agents(agents),
+                Ok(false) => agents,
+                Err(e) => {
+                    println!(
+                        "Something went wrong with the prompt; continuing without terminating"
+                    );
+                    agents
+                }
+            }
+        } else {
+            agents
+        }
+    };
+
+    match check_agents(&agents) {
         RunningAgentCheckStatus::SingleAgent(agent) => {
             // Print out a source-able string sequence eg:
             // export SSH_AUTH_SOCK=/tmp/ssh-Ojfuw4Y4n9Fm/agent.704
             // export SSH_AGENT_PID=705
             agent.print_env_commands();
         }
-        RunningAgentCheckStatus::MultipleAgents => {}
+        RunningAgentCheckStatus::MultipleAgents => {
+            let resp = Select::new("Multiple agents are running; you can pick an agent to print environment variables for", agents)
+                .prompt();
+            match resp {
+                Ok(choice) => {
+                    choice.print_env_commands();
+                }
+                Err(e) => {
+                    eprintln!("Failed to select agent: {}", e);
+                }
+            }
+        }
         RunningAgentCheckStatus::NoAgents => {
             println!(r#"No running agents; start your own with `eval $(ssh-agent -s)`"#);
         }
@@ -101,18 +168,29 @@ fn main() -> io::Result<()> {
     Ok(())
 }
 
-fn check_agents(agents: Vec<Agent>) -> RunningAgentCheckStatus {
-    let agents_with_identities: Vec<Agent> = agents
+fn purge_empty_agents(agents: Vec<Agent>) -> Vec<Agent> {
+    let (mut empty_agents, mut other_agents): (Vec<Agent>, Vec<Agent>) = agents
         .into_iter()
-        .filter(|a| match Agent::check_agent_identities(a) {
-            Ok(AgentIdentityStatus::NoIdentities) => false,
-            Ok(AgentIdentityStatus::Identities(_)) => true,
-            Err(_) => false,
-        })
-        .collect();
-    match agents_with_identities.len() {
+        .partition(|a| match Agent::check_agent_identities(&a) {
+            Ok(AgentIdentityStatus::NoIdentities) => true,
+            _ => false,
+        });
+    if other_agents.len() == 0 {
+        let empty_last = empty_agents.pop().unwrap();
+        other_agents.push(empty_last);
+    }
+
+    for a in empty_agents {
+        a.kill_agent();
+    }
+
+    other_agents
+}
+
+fn check_agents(agents: &Vec<Agent>) -> RunningAgentCheckStatus {
+    match agents.len() {
         0 => RunningAgentCheckStatus::NoAgents,
-        1 => RunningAgentCheckStatus::SingleAgent(agents_with_identities.first().unwrap().clone()),
+        1 => RunningAgentCheckStatus::SingleAgent(agents.first().unwrap().clone()),
         _ => RunningAgentCheckStatus::MultipleAgents,
     }
 }
