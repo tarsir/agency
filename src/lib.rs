@@ -1,5 +1,7 @@
 pub mod agent;
+pub mod agent_files;
 pub mod cli;
+
 use agent::{
     check_agents, get_current_agents, purge_empty_agents, resolve_agent_pids, Agent,
     RunningAgentCheckStatus,
@@ -9,7 +11,7 @@ use std::io;
 
 pub fn basic_operation() -> io::Result<()> {
     let agents: Vec<Agent> = get_current_agents()?;
-    let agents = resolve_agent_pids(agents);
+    let agents = resolve_agent_pids(&agents);
     let agents = {
         if agents.len() > 1 {
             let message =

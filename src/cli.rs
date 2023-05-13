@@ -4,37 +4,40 @@ use clap::{Args, Parser};
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     #[command(flatten)]
-    reducers: Reducers,
+    pub reducers: Reducers,
+
+    #[arg(short, long, help = "Show the currently running agents")]
+    pub show_agents: bool,
 
     #[arg(
         short = 'y',
         long,
         help = "Ez mode that non-interactively guarantees an agent when exactly 1 or 0 agents are running"
     )]
-    ez: bool,
+    pub ez: bool,
 
     #[arg(
         short,
         long = "purge",
         help = "Purge agents that have no identities registered"
     )]
-    purge_empty_agents: bool,
+    pub purge_empty_agents: bool,
 }
 
 #[derive(Args)]
 #[group(required = false, multiple = false)]
-struct Reducers {
+pub struct Reducers {
     #[arg(
         short = 'n',
         long = "reduce_count",
         help = "Consolidate to one agent by number of registered identities"
     )]
-    reduce_by_count: bool,
+    pub reduce_by_count: bool,
 
     #[arg(
         short = 'r',
         long = "reduce",
         help = "Consolidate to one agent with no particular method"
     )]
-    reduce_simple: bool,
+    pub reduce_simple: bool,
 }

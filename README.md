@@ -8,5 +8,11 @@ ssh-agenz is a manager for SSH agents (similar to `ssh-ident` or `keychain`) tha
 
 ## Usage
 
+- purge identity-less agents
+- consolidate to one agent
+- "ez" mode to connect in the case of 0 or 1 agents without interaction
+
 TODO: want to be able to add this to a shell profile script like `.bashrc` and then source the 
 output if it can connect to a running agent.
+
+

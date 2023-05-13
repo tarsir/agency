@@ -9,15 +9,18 @@ use std::process::Stdio;
 pub struct Agent {
     pub pid: String,
     pub socket_path: PathBuf,
+    pub is_running: bool,
 }
 
 impl Display for Agent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PID {}: {}",
+            "PID {}: {} at {} ({})",
             &self.pid,
-            self.check_agent_identities().unwrap()
+            self.check_agent_identities().unwrap(),
+            &self.socket_path.display(),
+            if self.is_running { "Running" } else { "Dead" }
         )
     }
 }
@@ -28,7 +31,31 @@ impl Agent {
         println!("export SSH_AGENT_PID={}", self.pid);
     }
 
-    fn kill_agent(&self) {
+    pub fn kill_and_clean_agent(&mut self) {
+        let started_as_running = self.is_running;
+        self.kill_agent();
+        if started_as_running {
+            return;
+        }
+
+        match self.clean_dead_agent_socket() {
+            Ok(()) => {
+                println!(
+                    "Removed dead agent's socket: {}",
+                    &self.socket_path.display()
+                );
+            }
+            Err(e) => {
+                eprintln!(
+                    "Unable to remove socket for agent at {}: {}",
+                    &self.socket_path.display(),
+                    e,
+                );
+            }
+        }
+    }
+
+    pub fn kill_agent(&mut self) {
         match Command::new("ssh-agent")
             .arg("-k")
             .env(
@@ -41,6 +68,7 @@ impl Agent {
         {
             Ok(status) => {
                 if status.success() {
+                    self.is_running = false;
                     println!("Agent pid {} killed", self.pid);
                 } else {
                     eprintln!("Failed to kill agent pid {}", self.pid);
@@ -50,7 +78,9 @@ impl Agent {
         }
     }
 
-    fn check_agent_identities(&self) -> Result<AgentIdentityStatus, Box<dyn std::error::Error>> {
+    pub fn check_agent_identities(
+        &self,
+    ) -> Result<AgentIdentityStatus, Box<dyn std::error::Error>> {
         match Command::new("ssh-add")
             .arg("-l")
             .env(
@@ -62,9 +92,19 @@ impl Agent {
             .output()
         {
             Ok(o) => {
-                let identity_list =
-                    String::from_utf8(o.stdout).unwrap_or("Something went wrong".to_string());
+                let output = String::from_utf8(o.stdout);
+                let identity_list = output.unwrap_or("Something went wrong".to_string());
                 let identity_list = identity_list.trim().split("\n").collect::<Vec<&str>>();
+
+                let stderr = String::from_utf8(o.stderr).unwrap_or_default();
+
+                if stderr
+                    .trim()
+                    .contains("Could not open a connection to your authentication agents.")
+                {
+                    return Ok(AgentIdentityStatus::ConnectionRefused);
+                }
+
                 match identity_list[..] {
                     ["The agent has no identities."] => Ok(AgentIdentityStatus::NoIdentities),
                     _ => Ok(AgentIdentityStatus::Identities(identity_list.len() as i32)),
@@ -83,6 +123,7 @@ pub enum AgentIdentityStatus {
     #[default]
     NoIdentities,
     Identities(i32),
+    ConnectionRefused,
 }
 
 impl Display for AgentIdentityStatus {
@@ -99,6 +140,9 @@ impl Display for AgentIdentityStatus {
                     if n == &1 { "identity" } else { "identities" }
                 )
             }
+            AgentIdentityStatus::ConnectionRefused => {
+                write!(f, "Connection attempt refused")
+            }
         }
     }
 }
@@ -109,20 +153,37 @@ pub enum RunningAgentCheckStatus {
     NoAgents,
 }
 
-pub fn purge_empty_agents(agents: Vec<Agent>) -> Vec<Agent> {
+pub fn purge_empty_agents_retain_one(agents: Vec<Agent>) -> Vec<Agent> {
     let (mut empty_agents, mut other_agents): (Vec<Agent>, Vec<Agent>) = agents
         .into_iter()
         .partition(|a| match Agent::check_agent_identities(&a) {
             Ok(AgentIdentityStatus::NoIdentities) => true,
             _ => false,
         });
-    if other_agents.len() == 0 {
+
+    if other_agents.len() == 0 && !empty_agents.is_empty() {
         let empty_last = empty_agents.pop().unwrap();
         other_agents.push(empty_last);
     }
 
-    for a in empty_agents {
-        a.kill_agent();
+    for mut a in empty_agents {
+        a.kill_and_clean_agent();
+    }
+
+    other_agents
+}
+
+pub fn purge_empty_agents(agents: Vec<Agent>) -> Vec<Agent> {
+    let (empty_agents, other_agents): (Vec<Agent>, Vec<Agent>) =
+        agents
+            .into_iter()
+            .partition(|a| match Agent::check_agent_identities(&a) {
+                Ok(AgentIdentityStatus::NoIdentities) => true,
+                _ => false,
+            });
+
+    for mut a in empty_agents {
+        a.kill_and_clean_agent();
     }
 
     other_agents
@@ -136,7 +197,7 @@ pub fn check_agents(agents: &Vec<Agent>) -> RunningAgentCheckStatus {
     }
 }
 
-pub fn resolve_agent_pids(agents: Vec<Agent>) -> Vec<Agent> {
+pub fn resolve_agent_pids(agents: &Vec<Agent>) -> Vec<Agent> {
     let ps_child = Command::new("ps")
         .arg("-ef")
         .stdout(Stdio::piped())
@@ -178,10 +239,22 @@ pub fn resolve_agent_pids(agents: Vec<Agent>) -> Vec<Agent> {
         })
         .map(|(pid, agent)| Agent {
             pid: pid.to_string(),
-            ..agent.clone()
+            is_running: true,
+            socket_path: agent.socket_path.clone(),
         })
         .collect();
     agents_with_inferred_pids
+}
+
+pub fn get_dead_agents(all_agents: Vec<Agent>, running_agents: Vec<Agent>) -> Vec<Agent> {
+    all_agents
+        .into_iter()
+        .filter(|a| {
+            !running_agents
+                .iter()
+                .any(|r_a| r_a.socket_path == a.socket_path)
+        })
+        .collect()
 }
 
 pub fn get_current_agents() -> io::Result<Vec<Agent>> {
@@ -215,6 +288,7 @@ pub fn get_current_agents() -> io::Result<Vec<Agent>> {
                 };
                 Ok(Agent {
                     pid,
+                    is_running: false,
                     socket_path: socket.path(),
                 })
             } else {
