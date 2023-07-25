@@ -1,158 +1,19 @@
-use std::fmt::Display;
-use std::fs;
-use std::io;
-use std::path::PathBuf;
-use std::process::Command;
-use std::process::Stdio;
+use std::{
+    fs, io,
+    process::{Command, Stdio},
+};
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct Agent {
-    pub pid: String,
-    pub socket_path: PathBuf,
-    pub is_running: bool,
-}
+use super::{Agent, AgentIdentityStatus};
 
-impl Display for Agent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "PID {}: {} at {} ({})",
-            &self.pid,
-            self.check_agent_identities().unwrap(),
-            &self.socket_path.display(),
-            if self.is_running { "Running" } else { "Dead" }
-        )
-    }
-}
-
-impl Agent {
-    pub fn print_env_commands(&self) {
-        println!("export SSH_AUTH_SOCK={:?}", self.socket_path);
-        println!("export SSH_AGENT_PID={}", self.pid);
-    }
-
-    pub fn kill_and_clean_agent(&mut self) {
-        let started_as_running = self.is_running;
-        self.kill_agent();
-        if started_as_running {
-            return;
-        }
-
-        match self.clean_dead_agent_socket() {
-            Ok(()) => {
-                println!(
-                    "Removed dead agent's socket: {}",
-                    &self.socket_path.display()
-                );
-            }
-            Err(e) => {
-                eprintln!(
-                    "Unable to remove socket for agent at {}: {}",
-                    &self.socket_path.display(),
-                    e,
-                );
-            }
-        }
-    }
-
-    pub fn kill_agent(&mut self) {
-        match Command::new("ssh-agent")
-            .arg("-k")
-            .env(
-                "SSH_AUTH_SOCK",
-                self.socket_path.to_str().unwrap_or_default(),
-            )
-            .env("SSH_AGENT_PID", &self.pid)
-            .stdout(Stdio::null())
-            .status()
-        {
-            Ok(status) => {
-                if status.success() {
-                    self.is_running = false;
-                    println!("Agent pid {} killed", self.pid);
-                } else {
-                    eprintln!("Failed to kill agent pid {}", self.pid);
-                }
-            }
-            Err(_) => eprintln!("Failed to kill agent pid {}", self.pid),
-        }
-    }
-
-    pub fn check_agent_identities(
-        &self,
-    ) -> Result<AgentIdentityStatus, Box<dyn std::error::Error>> {
-        match Command::new("ssh-add")
-            .arg("-l")
-            .env(
-                "SSH_AUTH_SOCK",
-                self.socket_path.to_str().unwrap_or_default(),
-            )
-            // the PID may not be required, funnily enough
-            .env("SSH_AGENT_PID", &self.pid)
-            .output()
-        {
-            Ok(o) => {
-                let output = String::from_utf8(o.stdout);
-                let identity_list = output.unwrap_or("Something went wrong".to_string());
-                let identity_list = identity_list.trim().split("\n").collect::<Vec<&str>>();
-
-                let stderr = String::from_utf8(o.stderr).unwrap_or_default();
-
-                if stderr
-                    .trim()
-                    .contains("Could not open a connection to your authentication agents.")
-                {
-                    return Ok(AgentIdentityStatus::ConnectionRefused);
-                }
-
-                match identity_list[..] {
-                    ["The agent has no identities."] => Ok(AgentIdentityStatus::NoIdentities),
-                    _ => Ok(AgentIdentityStatus::Identities(identity_list.len() as i32)),
-                }
-            }
-            Err(e) => {
-                println!("Error checking agent {}: {:?}", &self.pid, e);
-                Err(Box::new(e))
-            }
-        }
-    }
-}
-
-#[derive(Debug, Default)]
-pub enum AgentIdentityStatus {
-    #[default]
-    NoIdentities,
-    Identities(i32),
-    ConnectionRefused,
-}
-
-impl Display for AgentIdentityStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AgentIdentityStatus::NoIdentities => {
-                write!(f, "No identities")
-            }
-            AgentIdentityStatus::Identities(n) => {
-                write!(
-                    f,
-                    "{} {}",
-                    n,
-                    if n == &1 { "identity" } else { "identities" }
-                )
-            }
-            AgentIdentityStatus::ConnectionRefused => {
-                write!(f, "Connection attempt refused")
-            }
-        }
-    }
-}
-
+/// The possible states of agents running on the system.
 pub enum RunningAgentCheckStatus {
     SingleAgent(Agent),
     MultipleAgents,
     NoAgents,
 }
 
+/// Kill and clean live agents that have no identities registered while guaranteeing at least one
+/// stays alive.
 pub fn purge_empty_agents_retain_one(agents: Vec<Agent>) -> Vec<Agent> {
     let (mut empty_agents, mut other_agents): (Vec<Agent>, Vec<Agent>) = agents
         .into_iter()
@@ -173,6 +34,7 @@ pub fn purge_empty_agents_retain_one(agents: Vec<Agent>) -> Vec<Agent> {
     other_agents
 }
 
+/// Kill and clean all live agents that have no identities registered.
 pub fn purge_empty_agents(agents: Vec<Agent>) -> Vec<Agent> {
     let (empty_agents, other_agents): (Vec<Agent>, Vec<Agent>) =
         agents
@@ -189,6 +51,10 @@ pub fn purge_empty_agents(agents: Vec<Agent>) -> Vec<Agent> {
     other_agents
 }
 
+/// Build a `RunningAgentCheckStatus` from the list of agents.
+///
+/// If the list has one agent, `RunningAgentCheckStatus::SingleAgent(Agent)` will take ownership of
+/// the agent.
 pub fn check_agents(agents: &Vec<Agent>) -> RunningAgentCheckStatus {
     match agents.len() {
         0 => RunningAgentCheckStatus::NoAgents,
@@ -197,6 +63,7 @@ pub fn check_agents(agents: &Vec<Agent>) -> RunningAgentCheckStatus {
     }
 }
 
+/// Find the pids for each agent in `agents` that .
 pub fn resolve_agent_pids(agents: &Vec<Agent>) -> Vec<Agent> {
     let ps_child = Command::new("ps")
         .arg("-ef")
@@ -246,7 +113,9 @@ pub fn resolve_agent_pids(agents: &Vec<Agent>) -> Vec<Agent> {
     agents_with_inferred_pids
 }
 
+/// Filter the agents in `all_agents` that aren't in `running_agents`.
 pub fn get_dead_agents(all_agents: Vec<Agent>, running_agents: Vec<Agent>) -> Vec<Agent> {
+    // TODO: why doesn't this check `is_running`?
     all_agents
         .into_iter()
         .filter(|a| {
@@ -257,7 +126,12 @@ pub fn get_dead_agents(all_agents: Vec<Agent>, running_agents: Vec<Agent>) -> Ve
         .collect()
 }
 
+/// Get a list of candidate agents from the expected SSH agent directory.
+///
+/// The Agents returned by this function will all be marked as not running. They will be checked
+/// against the list of agent PIDs later to determine which agents are live.
 pub fn get_current_agents() -> io::Result<Vec<Agent>> {
+    // TODO: can this be other directories?
     let agent_dirs: Vec<Agent> = fs::read_dir("/tmp")?
         .filter_map(|res| match res {
             Ok(res) => {
@@ -292,6 +166,7 @@ pub fn get_current_agents() -> io::Result<Vec<Agent>> {
                     socket_path: socket.path(),
                 })
             } else {
+                // TODO: use a better error
                 Err(io::Error::new(io::ErrorKind::Other, "argh"))
             }
         })

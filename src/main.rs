@@ -1,6 +1,8 @@
-use agency::agent::{
-    get_current_agents, get_dead_agents, purge_empty_agents, resolve_agent_pids, Agent,
+use agency::agent::identities::AgentIdentityStatus;
+use agency::agent::running_agents::{
+    get_current_agents, get_dead_agents, purge_empty_agents, resolve_agent_pids,
 };
+use agency::agent::Agent;
 use agency::basic_operation;
 use agency::cli::Cli;
 use clap::Parser;
@@ -76,15 +78,15 @@ fn main() -> io::Result<()> {
     if reducers.reduce_by_count {
         running_agents.sort_unstable_by(|a, b| {
             let a_identities = match a.check_agent_identities().unwrap_or_default() {
-                agency::agent::AgentIdentityStatus::NoIdentities => 0,
-                agency::agent::AgentIdentityStatus::Identities(c) => c,
-                agency::agent::AgentIdentityStatus::ConnectionRefused => -1,
+                AgentIdentityStatus::NoIdentities => 0,
+                AgentIdentityStatus::Identities(c) => c,
+                AgentIdentityStatus::ConnectionRefused => -1,
             };
 
             let b_identities = match b.check_agent_identities().unwrap_or_default() {
-                agency::agent::AgentIdentityStatus::NoIdentities => 0,
-                agency::agent::AgentIdentityStatus::Identities(c) => c,
-                agency::agent::AgentIdentityStatus::ConnectionRefused => -1,
+                AgentIdentityStatus::NoIdentities => 0,
+                AgentIdentityStatus::Identities(c) => c,
+                AgentIdentityStatus::ConnectionRefused => -1,
             };
 
             b_identities.cmp(&a_identities)

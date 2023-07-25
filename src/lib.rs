@@ -3,8 +3,11 @@ pub mod agent_files;
 pub mod cli;
 
 use agent::{
-    check_agents, get_current_agents, purge_empty_agents, resolve_agent_pids, Agent,
-    RunningAgentCheckStatus,
+    running_agents::{
+        check_agents, get_current_agents, purge_empty_agents, resolve_agent_pids,
+        RunningAgentCheckStatus,
+    },
+    Agent,
 };
 use inquire::{Confirm, Select};
 use std::io;
