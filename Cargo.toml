@@ -1,7 +1,7 @@
 [package]
 name = "ssh-agency"
 author = ["Stephen Hara <stephen.hara@stephenhara.com>"]
-version = "1.0.0-rc"
+version = "0.1.0"
 description = "CLI helping you manage SSH agents when they get gnarly"
 edition = "2021"
 keywords = ["utility", "system"]
