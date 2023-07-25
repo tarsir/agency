@@ -1,0 +1,16 @@
+[package]
+name = "ssh-agency"
+author = ["Stephen Hara <stephen.hara@stephenhara.com>"]
+version = "0.1.0"
+description = "CLI helping you manage SSH agents when they get gnarly"
+edition = "2021"
+keywords = ["utility", "system"]
+categories = ["command-line-utilities"]
+license-file = "LICENSE"
+repository = "https://github.com/tarsir/agency"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.2.7", features = ["derive"]}
+inquire = "0.6.2"
