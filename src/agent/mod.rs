@@ -1,3 +1,4 @@
+pub mod files;
 pub mod identities;
 pub mod running_agents;
 use std::fmt::Display;

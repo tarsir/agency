@@ -1,5 +1,4 @@
 pub mod agent;
-pub mod agent_files;
 pub mod cli;
 
 use agent::{

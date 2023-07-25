@@ -63,7 +63,10 @@ pub fn check_agents(agents: &Vec<Agent>) -> RunningAgentCheckStatus {
     }
 }
 
-/// Find the pids for each agent in `agents` that .
+/// Guess the pids for the `agents` found from the existing sockets.
+///
+/// The "guessing" relies on the PID and the socket path having similar numeric identifiers. If
+/// this assumption is broken, the application may incorrectly assign a PID to an agent.
 pub fn resolve_agent_pids(agents: &Vec<Agent>) -> Vec<Agent> {
     let ps_child = Command::new("ps")
         .arg("-ef")

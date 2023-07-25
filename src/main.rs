@@ -1,13 +1,14 @@
-use agency::agent::identities::AgentIdentityStatus;
-use agency::agent::running_agents::{
-    get_current_agents, get_dead_agents, purge_empty_agents, resolve_agent_pids,
-};
-use agency::agent::Agent;
-use agency::basic_operation;
-use agency::cli::Cli;
-use clap::Parser;
 use std::io;
 use std::process::Command;
+
+use clap::Parser;
+use ssh_agency::agent::identities::AgentIdentityStatus;
+use ssh_agency::agent::running_agents::{
+    get_current_agents, get_dead_agents, purge_empty_agents, resolve_agent_pids,
+};
+use ssh_agency::agent::Agent;
+use ssh_agency::basic_operation;
+use ssh_agency::cli::Cli;
 
 fn main() -> io::Result<()> {
     let cli = Cli::parse();
@@ -32,7 +33,7 @@ fn main() -> io::Result<()> {
     }
 
     if cli.ez {
-        match &agents[..] {
+        match &running_agents[..] {
             [agent] => agent.print_env_commands(),
             [] => {
                 let start_agent_output = Command::new("ssh-agent").arg("-s").status();
@@ -50,14 +51,17 @@ fn main() -> io::Result<()> {
     }
 
     if cli.show_agents {
-        for a in running_agents {
+        for a in &running_agents {
             println!("{}", a);
+        }
+        if running_agents.is_empty() {
+            println!("No running agents")
         }
         return Ok(());
     }
 
     if cli.purge_empty_agents {
-        purge_empty_agents(agents);
+        purge_empty_agents(running_agents);
         return Ok(());
     }
 
