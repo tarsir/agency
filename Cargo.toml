@@ -1,11 +1,11 @@
 [package]
 name = "ssh-agency"
 author = ["Stephen Hara <stephen.hara@stephenhara.com>"]
-version = "0.1.0"
+version = "1.0.0-rc"
 description = "CLI helping you manage SSH agents when they get gnarly"
 edition = "2021"
 keywords = ["utility", "system"]
-categories = ["command-line-utilities", ]
+categories = ["command-line-utilities"]
 license-file = "LICENSE"
 repository = "https://github.com/tarsir/agency"
 
