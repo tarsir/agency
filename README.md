@@ -7,6 +7,14 @@
 - provides a non-interactive mode to start your shell sessions with an SSH
   agent easily if there are 0 or 1 existing agents
 
+## Installation
+
+Right now the only installation method aside from building from source is `cargo install`:
+
+```sh
+cargo install ssh-agency
+```
+
 ## Usage
 
 ```
