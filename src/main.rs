@@ -36,6 +36,7 @@ fn main() -> io::Result<()> {
         match &running_agents[..] {
             [agent] => agent.print_env_commands(),
             [] => {
+                // TODO: refactor into a function?
                 let start_agent_output = Command::new("ssh-agent").arg("-s").status();
                 if let Ok(s) = start_agent_output {
                     if !s.success() {
